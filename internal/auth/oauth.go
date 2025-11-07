@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -28,17 +29,27 @@ type TokenResponse struct {
 	Scope       string `json:"scope"`
 }
 
-func NewGitHubOAuth() *GitHubOAuth {
+func NewGitHubOAuth() (*GitHubOAuth, error) {
 	b := make([]byte, 16)
 	rand.Read(b)
 	state := base64.URLEncoding.EncodeToString(b)
 
+	clientID := os.Getenv("GITHUB_CLIENT_ID")
+	clientSecret := os.Getenv("GITHUB_CLIENT_SECRET")
+	
+	if clientID == "" {
+		return nil, fmt.Errorf("GITHUB_CLIENT_ID environment variable is required")
+	}
+	if clientSecret == "" {
+		return nil, fmt.Errorf("GITHUB_CLIENT_SECRET environment variable is required")
+	}
+
 	return &GitHubOAuth{
-		clientID:     "Ov23lixAgV5sEdMtSTDL", // Your OAuth App
-		clientSecret: "af3eda8371432e81483f2d8a6cd7cd73319d2c88", // Your OAuth secret
+		clientID:     clientID,
+		clientSecret: clientSecret,
 		redirectURL:  "http://localhost:8080/callback",
 		state:        state,
-	}
+	}, nil
 }
 
 func (g *GitHubOAuth) GetAuthURL() string {

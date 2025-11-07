@@ -9,6 +9,11 @@ import (
 )
 
 func main() {
+	// Load environment variables from .env file
+	if err := config.LoadEnv(); err != nil {
+		log.Printf("Warning: Failed to load .env file: %v", err)
+	}
+
 	fmt.Println("🐘 Welcome to Indlovu Pipeline Generator")
 	fmt.Println("   Indlovu's CI/CD Pipeline Setup Tool")
 	fmt.Println()

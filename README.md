@@ -61,11 +61,12 @@ go build -o indlovu-pipeline ./cmd
 ## 🏗️ What It Creates
 
 - ✅ GitHub repository
-- ✅ Complete CI/CD workflow file
+- ✅ Complete CI/CD workflow file with PR-based approval
 - ✅ GitHub secrets configuration
 - ✅ OIDC trust policy documentation
 - ✅ Multi-environment support
 - ✅ Security scanning integration
+- ✅ Automated plan on PRs, apply on merge
 
 ## 🔧 Configuration
 
@@ -82,18 +83,33 @@ The tool collects:
 - IAM role ARNs for each environment
 
 ### Pipeline Features
-- Branch-based deployments
-- Security scanning (Checkov, TFLint, TFSec)
-- OIDC authentication
-- Multi-environment support
+- **PR-based approval workflow** - Plan runs on PRs, apply after merge
+- **Branch-based deployments** - Automatic environment detection
+- **Security scanning** - Checkov, TFLint, TFSec integration
+- **OIDC authentication** - Keyless AWS access
+- **Multi-environment support** - dev/qa/prod environments
+- **Feature branch protection** - No apply on feature/ branches
 
-## 🛡️ Security
+## 🛡️ Security & Workflow
 
+### Security Features
 - Uses GitHub OIDC for keyless authentication
 - No long-term AWS credentials stored
 - Branch-specific IAM role restrictions
 - Encrypted GitHub secrets
 - Security scanning in pipeline
+
+### Approval Workflow
+1. **Create PR** → Terraform plan runs automatically
+2. **Review PR** → Code and infrastructure changes reviewed together
+3. **Approve & Merge** → Single approval gate for both code and infra
+4. **Auto Deploy** → Apply runs immediately after merge
+
+### Branch Behavior
+- **PRs** → Plan only (shows proposed changes)
+- **main/master** → Plan + Apply to prod environment
+- **dev/qa** → Plan + Apply to respective environments
+- **feature/** → Plan only (no apply)
 
 ## 🌍 Ubuntu Philosophy
 

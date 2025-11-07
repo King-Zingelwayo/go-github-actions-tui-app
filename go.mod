@@ -5,6 +5,7 @@ go 1.24.0
 require (
 	github.com/charmbracelet/huh v0.2.3
 	github.com/google/go-github/v56 v56.0.0
+	golang.org/x/crypto v0.43.0
 	golang.org/x/oauth2 v0.15.0
 )
 
@@ -36,7 +37,6 @@ require (
 	github.com/rivo/uniseg v0.4.4 // indirect
 	github.com/yuin/goldmark v1.6.0 // indirect
 	github.com/yuin/goldmark-emoji v1.0.2 // indirect
-	golang.org/x/crypto v0.43.0 // indirect
 	golang.org/x/net v0.45.0 // indirect
 	golang.org/x/sync v0.17.0 // indirect
 	golang.org/x/sys v0.37.0 // indirect

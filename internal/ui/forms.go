@@ -38,7 +38,10 @@ func GitHubConfigForm(cfg *config.Config) error {
 
 	// Start OAuth flow
 	fmt.Println("\n🔐 Starting GitHub OAuth flow...")
-	oauth := auth.NewGitHubOAuth()
+	oauth, err := auth.NewGitHubOAuth()
+	if err != nil {
+		return fmt.Errorf("OAuth setup failed: %w", err)
+	}
 	authURL := oauth.GetAuthURL()
 
 	fmt.Println("🌐 Opening GitHub authorization page...")
