@@ -21,7 +21,6 @@ build-all:
 # Create GitHub release
 # Create GitHub release
 release: build-all
-	gh auth login \
 	gh release create v1.0.0 \
 		bin/elephant-tf-ci-linux-amd64 \
 		bin/elephant-tf-ci-darwin-amd64 \
