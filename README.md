@@ -1,8 +1,8 @@
-# 🐘 Indlovu Pipeline Generator
+# 🐘 Elephant TF CI - Terraform Pipeline Generator
 
 **Ubuntu-powered CI/CD Pipeline Setup Tool**
 
-Indlovu (Elephant in Zulu) is a Go TUI application that helps you create GitHub Actions CI/CD pipelines with AWS OIDC authentication. Built with Ubuntu philosophy - "I am because we are."
+Elephant TF CI (formerly Indlovu) is a Go TUI application that helps you create GitHub Actions CI/CD pipelines with AWS OIDC authentication. Built with Ubuntu philosophy - "I am because we are."
 
 ## ✨ Features
 
@@ -12,6 +12,32 @@ Indlovu (Elephant in Zulu) is a Go TUI application that helps you create GitHub 
 - 🔧 **Multi-Environment** - Support for dev/qa/prod environments
 - 🛡️ **Security Scanning** - Built-in Checkov, TFLint, and TFSec
 - 🌍 **Ubuntu Spirit** - Embracing African tech excellence
+
+## 📦 Installation
+
+### Quick Install (Recommended)
+
+**Linux:**
+```bash
+curl -L https://github.com/yourusername/elephant-tf-ci/releases/latest/download/elephant-tf-ci-linux-amd64 -o elephant-tf-ci
+chmod +x elephant-tf-ci
+sudo mv elephant-tf-ci /usr/local/bin/
+```
+
+**macOS:**
+```bash
+curl -L https://github.com/yourusername/elephant-tf-ci/releases/latest/download/elephant-tf-ci-darwin-amd64 -o elephant-tf-ci
+chmod +x elephant-tf-ci
+sudo mv elephant-tf-ci /usr/local/bin/
+```
+
+**Windows:**
+Download `elephant-tf-ci-windows-amd64.exe` from [releases](https://github.com/yourusername/elephant-tf-ci/releases/latest)
+
+### Verify Installation
+```bash
+elephant-tf-ci
+```
 
 ## 🚀 Quick Start
 
@@ -69,41 +95,38 @@ Indlovu (Elephant in Zulu) is a Go TUI application that helps you create GitHub 
    - Attach policies for Terraform operations (EC2, S3, etc.)
    - Ensure S3 access for Terraform state bucket
 
-### Installation
+### Usage
+
+```bash
+# Run the application
+elephant-tf-ci
+```
+
+Follow the interactive prompts to:
+1. Authenticate with GitHub
+2. Configure AWS settings
+3. Set repository preferences
+4. Review and create your pipeline
+
+## 🏗️ Development
+
+### Build from Source
 
 ```bash
 # Clone and build
-git clone <repository>
-cd indlovu-pipeline
+git clone https://github.com/yourusername/elephant-tf-ci
+cd elephant-tf-ci
 go mod tidy
-go build -o indlovu-pipeline ./cmd
+make build
 
-# Setup environment variables
-cp .env.example .env
-# Edit .env with your GitHub OAuth credentials
-
-# Run the application
-./indlovu-pipeline
+# Run locally
+./bin/elephant-tf-ci
 ```
 
-### Usage
-
-1. **GitHub Configuration**
-   - Enter your GitHub token
-   - Specify username and repository name
-
-2. **AWS Configuration**
-   - Provide AWS Account ID and region
-   - Enter S3 bucket for Terraform state
-   - Configure IAM role ARNs
-
-3. **Repository Settings**
-   - Set repository description
-   - Choose public/private visibility
-
-4. **Review & Deploy**
-   - Confirm configuration
-   - Let Indlovu create everything!
+### Build for Multiple Platforms
+```bash
+make build-all
+```
 
 ## 🏗️ What It Creates
 
@@ -177,4 +200,4 @@ MIT License - see LICENSE file for details.
 
 ---
 
-**Sawubona!** 🐘 Happy building with Indlovu Pipeline!
+**Sawubona!** 🐘 Happy building with Elephant TF CI!
