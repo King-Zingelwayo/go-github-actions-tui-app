@@ -7,13 +7,25 @@ import (
 	"indlovu-pipeline/internal/ui"
 	"log"
 	"os"
+	"flag"
 	"strings"
 )
 
 //go:embed .env
 var embeddedEnv string
+const version = "v1.0.1"
 
 func main() {
+	var showVersion bool
+	flag.BoolVar(&showVersion, "version", false, "Show version information")
+	flag.BoolVar(&showVersion, "v", false, "Show version information (shorthand)")
+	flag.Parse()
+
+	if showVersion {
+		fmt.Printf("🐘 Elephant TF CI %s\n", version)
+		fmt.Println("Ubuntu-powered Terraform CI/CD Pipeline Generator")
+		os.Exit(0)
+	}
 	// Load embedded .env first
 	loadEmbeddedEnv()
 	
