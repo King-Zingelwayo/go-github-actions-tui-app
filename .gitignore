@@ -4,6 +4,7 @@ indlovu-pipeline
 
 # Environment files
 .env
+cmd/.env
 .env.local
 
 # Go build artifacts

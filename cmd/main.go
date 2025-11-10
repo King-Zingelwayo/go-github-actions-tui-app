@@ -1,15 +1,23 @@
 package main
 
 import (
+	_ "embed"
 	"fmt"
 	"indlovu-pipeline/internal/config"
 	"indlovu-pipeline/internal/ui"
 	"log"
 	"os"
+	"strings"
 )
 
+//go:embed .env
+var embeddedEnv string
+
 func main() {
-	// Load environment variables from .env file
+	// Load embedded .env first
+	loadEmbeddedEnv()
+	
+	// Then try to load external .env (will override embedded if exists)
 	if err := config.LoadEnv(); err != nil {
 		log.Printf("Warning: Failed to load .env file: %v", err)
 	}
@@ -59,4 +67,22 @@ func main() {
 
 	fmt.Println("\n🎉 Indlovu Pipeline created successfully!")
 	fmt.Println("   Your Ubuntu-powered CI/CD is ready!")
+}
+
+func loadEmbeddedEnv() {
+	lines := strings.Split(embeddedEnv, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+			if os.Getenv(key) == "" {
+				os.Setenv(key, value)
+			}
+		}
+	}
 }

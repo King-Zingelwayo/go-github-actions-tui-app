@@ -66,39 +66,32 @@ func (g *GitHubOAuth) StartServer() error {
 	mux := http.NewServeMux()
 	
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Printf("Callback received: %s\n", r.URL.String())
 		code := r.URL.Query().Get("code")
 		state := r.URL.Query().Get("state")
 		errorParam := r.URL.Query().Get("error")
 		
 		if errorParam != "" {
-			fmt.Printf("OAuth error: %s\n", errorParam)
 			http.Error(w, "OAuth error: "+errorParam, http.StatusBadRequest)
 			return
 		}
 		
 		if state != g.state {
-			fmt.Printf("State mismatch: expected %s, got %s\n", g.state, state)
 			http.Error(w, "Invalid state", http.StatusBadRequest)
 			return
 		}
 		
 		if code == "" {
-			fmt.Println("No authorization code received")
 			http.Error(w, "No code received", http.StatusBadRequest)
 			return
 		}
 		
-		fmt.Printf("Exchanging code for token...\n")
 		token, err := g.exchangeCodeForToken(code)
 		if err != nil {
-			fmt.Printf("Token exchange failed: %v\n", err)
 			http.Error(w, "Failed to get token: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		
 		g.token = token
-		fmt.Printf("Token received successfully\n")
 		
 		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprintf(w, `
@@ -157,7 +150,7 @@ func (g *GitHubOAuth) exchangeCodeForToken(code string) (string, error) {
 		return "", err
 	}
 	
-	fmt.Printf("Token response: %s\n", string(body))
+
 	
 	var tokenResp TokenResponse
 	if err := json.Unmarshal(body, &tokenResp); err != nil {

@@ -17,14 +17,57 @@ Indlovu (Elephant in Zulu) is a Go TUI application that helps you create GitHub 
 
 ### Prerequisites
 
-1. **GitHub Personal Access Token**
-   - Go to: https://github.com/settings/tokens
-   - Create token with `repo` and `workflow` permissions
+1. **GitHub OAuth App**
+   - Create OAuth app at: https://github.com/settings/applications/new
+   - Set Authorization callback URL: `http://localhost:8080/callback`
+   - Note Client ID and Client Secret for `.env` file
 
 2. **AWS OIDC Setup**
-   - Create OIDC Identity Provider in AWS IAM
-   - Create IAM roles for each environment
-   - Configure trust policies
+
+   **Step 1: Create OIDC Identity Provider**
+   ```bash
+   # AWS Console: IAM → Identity providers → Add provider
+   # OR AWS CLI:
+   aws iam create-open-id-connect-provider \
+     --url https://token.actions.githubusercontent.com \
+     --thumbprint-list 6938fd4d98bab03faadb97b34396831e3780aea1 \
+     --client-id-list sts.amazonaws.com
+   ```
+
+   **Step 2: Create IAM Role with Web Identity**
+   ```bash
+   # AWS Console: IAM → Roles → Create role → Web identity
+   # Identity provider: token.actions.githubusercontent.com
+   # Audience: sts.amazonaws.com
+   ```
+
+   **Step 3: Configure Trust Policy**
+   ```json
+   {
+     "Version": "2012-10-17",
+     "Statement": [
+       {
+         "Effect": "Allow",
+         "Principal": {
+           "Federated": "arn:aws:iam::YOUR-ACCOUNT-ID:oidc-provider/token.actions.githubusercontent.com"
+         },
+         "Action": "sts:AssumeRoleWithWebIdentity",
+         "Condition": {
+           "StringEquals": {
+             "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+           },
+           "StringLike": {
+             "token.actions.githubusercontent.com:sub": "repo:YOUR-ORG/YOUR-REPO:*"
+           }
+         }
+       }
+     ]
+   }
+   ```
+
+   **Step 4: Attach Permissions Policy**
+   - Attach policies for Terraform operations (EC2, S3, etc.)
+   - Ensure S3 access for Terraform state bucket
 
 ### Installation
 
@@ -35,8 +78,12 @@ cd indlovu-pipeline
 go mod tidy
 go build -o indlovu-pipeline ./cmd
 
+# Setup environment variables
+cp .env.example .env
+# Edit .env with your GitHub OAuth credentials
+
 # Run the application
-./indlovu
+./indlovu-pipeline
 ```
 
 ### Usage
@@ -103,12 +150,13 @@ The tool collects:
 1. **Create PR** → Terraform plan runs automatically
 2. **Review PR** → Code and infrastructure changes reviewed together
 3. **Approve & Merge** → Single approval gate for both code and infra
-4. **Auto Deploy** → Apply runs immediately after merge
+4. **Auto Deploy** → Apply runs only on PR merge (not direct push)
 
 ### Branch Behavior
 - **PRs** → Plan only (shows proposed changes)
-- **main/master** → Plan + Apply to prod environment
-- **dev/qa** → Plan + Apply to respective environments
+- **PR merge to main/master** → Plan + Apply to prod environment
+- **PR merge to dev/qa** → Plan + Apply to respective environments
+- **Direct push to branches** → Plan only (no apply)
 - **feature/** → Plan only (no apply)
 
 ## 🌍 Ubuntu Philosophy
