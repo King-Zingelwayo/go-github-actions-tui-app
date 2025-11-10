@@ -19,20 +19,21 @@ Elephant TF CI (formerly Indlovu) is a Go TUI application that helps you create 
 
 **Linux:**
 ```bash
-curl -L https://github.com/yourusername/elephant-tf-ci/releases/latest/download/elephant-tf-ci-linux-amd64 -o elephant-tf-ci
+curl -L https://github.com/King-Zingelwayo/go-github-actions-tui-app/releases/latest/download/elephant-tf-ci-linux-amd64 -o elephant-tf-ci
 chmod +x elephant-tf-ci
 sudo mv elephant-tf-ci /usr/local/bin/
 ```
 
 **macOS:**
 ```bash
-curl -L https://github.com/yourusername/elephant-tf-ci/releases/latest/download/elephant-tf-ci-darwin-amd64 -o elephant-tf-ci
+curl -L https://github.com/King-Zingelwayo/go-github-actions-tui-app/releases/latest/download/elephant-tf-ci-darwin-amd64 -o elephant-tf-ci
 chmod +x elephant-tf-ci
 sudo mv elephant-tf-ci /usr/local/bin/
 ```
 
 **Windows:**
-Download `elephant-tf-ci-windows-amd64.exe` from [releases](https://github.com/yourusername/elephant-tf-ci/releases/latest)
+Download `elephant-tf-ci-windows-amd64.exe` from [releases](https://github.com/King-Zingelwayo/go-github-actions-tui-app/releases/latest)
+
 
 ### Verify Installation
 ```bash
@@ -114,7 +115,7 @@ Follow the interactive prompts to:
 
 ```bash
 # Clone and build
-git clone https://github.com/yourusername/elephant-tf-ci
+git clone https://github.com/King-Zingelwayo/go-github-actions-tui-app
 cd elephant-tf-ci
 go mod tidy
 make build
