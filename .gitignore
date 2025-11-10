@@ -1,6 +1,6 @@
 # Binaries
 indlovu-pipeline
-*.exe
+# *.exe
 
 # Environment files
 .env
