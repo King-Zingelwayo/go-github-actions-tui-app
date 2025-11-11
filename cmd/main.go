@@ -13,7 +13,7 @@ import (
 
 //go:embed .env
 var embeddedEnv string
-const version = "v1.0.2"
+const version = "v1.1.0"
 
 func main() {
 	var showVersion bool

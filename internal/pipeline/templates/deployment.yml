@@ -151,12 +151,16 @@ jobs:
             echo "ENV_FILE=$TFVARS_FILE" >> $GITHUB_ENV
             echo "Using tfvars file: $TFVARS_FILE"
           else
-            echo "ERROR: No .tfvars files found in repository"
-            exit 1
+            echo "No .tfvars files found - continuing without variable file"
           fi
 
       - name: Terraform Plan
-        run: terraform plan -var-file=${{ env.ENV_FILE }}
+        run: |
+          if [ -n "${{ env.ENV_FILE }}" ]; then
+            terraform plan -var-file=${{ env.ENV_FILE }}
+          else
+            terraform plan
+          fi
 
   apply:
     name: Terraform Apply
@@ -236,12 +240,21 @@ jobs:
             echo "ENV_FILE=$TFVARS_FILE" >> $GITHUB_ENV
             echo "Using tfvars file: $TFVARS_FILE"
           else
-            echo "ERROR: No .tfvars files found in repository"
-            exit 1
+            echo "No .tfvars files found - continuing without variable file"
           fi
 
       - name: Terraform Plan
-        run: terraform plan -var-file=${{ env.ENV_FILE }}
+        run: |
+          if [ -n "${{ env.ENV_FILE }}" ]; then
+            terraform plan -var-file=${{ env.ENV_FILE }}
+          else
+            terraform plan
+          fi
 
       - name: Terraform Apply
-        run: terraform apply -auto-approve -var-file=${{ env.ENV_FILE }}
+        run: |
+          if [ -n "${{ env.ENV_FILE }}" ]; then
+            terraform apply -auto-approve -var-file=${{ env.ENV_FILE }}
+          else
+            terraform apply -auto-approve
+          fi
