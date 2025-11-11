@@ -1,18 +1,20 @@
 package pipeline
 
 import (
+	_ "embed"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/google/go-github/v56/github"
 	"golang.org/x/crypto/nacl/box"
 	"golang.org/x/oauth2"
 )
+
+//go:embed templates/deployment.yml
+var deploymentTemplate string
 
 type PipelineSetup struct {
 	client *github.Client
@@ -119,11 +121,7 @@ func encryptSecret(plaintext, publicKeyB64 string) (string, error) {
 
 func (p *PipelineSetup) createWorkflowFile() error {
 	workflowPath := ".github/workflows/terraform.yml"
-	templatePath := filepath.Join("internal", "templates", "deployment.yml")
-	content, err := os.ReadFile(templatePath)
-	if err != nil {
-		return err
-	}
+	content := []byte(deploymentTemplate)
 
 	// Replace SELECTED_BRANCH placeholder with actual branch
 	branch := p.config.Branch
