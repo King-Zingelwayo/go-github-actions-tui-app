@@ -1,0 +1,298 @@
+name: Terraform Destroy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment to destroy'
+        required: true
+        type: string
+      aws_region:
+        description: 'AWS Region'
+        required: true
+        type: string
+        default: 'us-east-1'
+      tf_state_bucket:
+        description: 'Terraform State S3 Bucket'
+        required: true
+        type: string
+      role_arn:
+        description: 'AWS Role ARN (overrides default pipeline role)'
+        required: false
+        type: string
+      confirm_destroy:
+        description: 'Type "DESTROY" to confirm'
+        required: true
+        type: string
+
+permissions:
+  id-token: write   # Required for OIDC
+  contents: read
+
+jobs:
+  destroy:
+    name: Terraform Destroy
+    runs-on: ubuntu-latest
+    if: github.event.inputs.confirm_destroy == 'DESTROY'
+
+    env:
+      AWS_REGION: ${{ github.event.inputs.aws_region }}
+      TF_STATE_BUCKET: ${{ github.event.inputs.tf_state_bucket }}
+      ENVIRONMENT: ${{ github.event.inputs.environment }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Validate Destroy Confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirm_destroy }}" != "DESTROY" ]; then
+            echo "❌ Destroy confirmation failed. You must type 'DESTROY' exactly."
+            exit 1
+          fi
+          echo "✅ Destroy confirmation validated"
+
+      - name: Set AWS Role
+        id: set-role
+        run: |
+          # Use input role ARN or default pipeline role ARN
+          if [ -n "${{ github.event.inputs.role_arn }}" ]; then
+            ROLE_ARN="${{ github.event.inputs.role_arn }}"
+            echo "Using input role ARN"
+          else
+            ROLE_ARN="${{ secrets.PIPELINE_ROLE_ARN }}"
+            echo "Using pipeline role ARN"
+          fi
+          
+          echo "ROLE_ARN=$ROLE_ARN" >> $GITHUB_ENV
+          echo "Selected ROLE_ARN: $ROLE_ARN"
+          
+          if [ -z "$ROLE_ARN" ] || [ "$ROLE_ARN" = "" ]; then
+            echo "ERROR: No role ARN configured. Please set PIPELINE_ROLE_ARN secret or provide role_arn input."
+            exit 1
+          fi
+
+      - name: Configure AWS Credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.ROLE_ARN }}
+          role-session-name: GitHubActions-Destroy-${{ github.run_id }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.6.0
+
+      - name: Read Backend Configuration
+        id: backend-config
+        run: |
+          echo "📖 Reading backend configuration from backend.tf"
+          echo "Current environment: ${{ env.ENVIRONMENT }}"
+          
+          if [ -f "backend.tf" ]; then
+            echo "backend.tf contents:"
+            cat backend.tf
+            echo "---"
+            
+            # Extract key from backend.tf - handle both quoted and unquoted values
+            BACKEND_KEY=$(grep -E '^[[:space:]]*key[[:space:]]*=' backend.tf | sed -E 's/.*=[[:space:]]*["'\'']*([^"'\'']*)["'\'']*.*$/\1/' | head -1)
+            
+            if [ -n "$BACKEND_KEY" ]; then
+              echo "Found backend key: $BACKEND_KEY"
+              echo "BACKEND_KEY=$BACKEND_KEY" >> $GITHUB_OUTPUT
+            else
+              echo "⚠️ Could not extract key from backend.tf, using environment-based key"
+              echo "BACKEND_KEY=${{ env.ENVIRONMENT }}/terraform.tfstate" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "⚠️ backend.tf not found, using environment-based key"
+            echo "BACKEND_KEY=${{ env.ENVIRONMENT }}/terraform.tfstate" >> $GITHUB_OUTPUT
+          fi
+          
+          echo "Final backend key: $(echo "BACKEND_KEY" | cut -d'=' -f2)"
+
+      - name: Terraform Init (S3 Backend)
+        run: |
+          BACKEND_KEY="${{ steps.backend-config.outputs.BACKEND_KEY }}"
+          echo "🔧 Initializing Terraform with backend key: $BACKEND_KEY"
+          
+          terraform init \
+            -backend-config="bucket=${{ env.TF_STATE_BUCKET }}" \
+            -backend-config="key=$BACKEND_KEY" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -input=false
+
+      - name: Select .tfvars File
+        run: |
+          # Find first .tfvars file
+          TFVARS_FILE=$(find . -name "*.tfvars" -type f | head -1)
+          
+          if [ -n "$TFVARS_FILE" ]; then
+            echo "ENV_FILE=$TFVARS_FILE" >> $GITHUB_ENV
+            echo "Using tfvars file: $TFVARS_FILE"
+          else
+            echo "No .tfvars files found - continuing without variable file"
+          fi
+
+      - name: Check Terraform State
+        run: |
+          BACKEND_KEY="${{ steps.backend-config.outputs.BACKEND_KEY }}"
+          echo "🔍 Checking Terraform state for environment: ${{ env.ENVIRONMENT }}"
+          echo "State file path: $BACKEND_KEY"
+          echo "S3 bucket: ${{ env.TF_STATE_BUCKET }}"
+          
+          # Check if state file exists in S3
+          if aws s3 ls "s3://${{ env.TF_STATE_BUCKET }}/$BACKEND_KEY" 2>/dev/null; then
+            echo "✅ State file exists in S3"
+            
+            # Show state file contents
+            echo "State file contents:"
+            terraform state list || echo "No resources in state"
+            
+            # Show state file size
+            aws s3 ls "s3://${{ env.TF_STATE_BUCKET }}/$BACKEND_KEY" --human-readable
+          else
+            echo "⚠️ State file does not exist in S3"
+            echo "Available state files in bucket:"
+            aws s3 ls "s3://${{ env.TF_STATE_BUCKET }}/" --recursive || echo "No files found"
+          fi
+
+      - name: Final Destroy Confirmation
+        run: |
+          echo "⚠️ ========================================== ⚠️"
+          echo "🚨 FINAL WARNING: ABOUT TO DESTROY RESOURCES"
+          echo "⚠️ ========================================== ⚠️"
+          echo "Environment: ${{ env.ENVIRONMENT }}"
+          echo "Region: ${{ env.AWS_REGION }}"
+          echo "State Bucket: ${{ env.TF_STATE_BUCKET }}"
+          echo ""
+          echo "This action will PERMANENTLY DELETE all resources!"
+          echo "Proceeding in 10 seconds..."
+          sleep 10
+
+      - name: Check Resources Before Destroy
+        id: check-resources
+        run: |
+          echo "🔍 Checking if resources exist in state..."
+          
+          # Get list of resources in state
+          RESOURCE_COUNT=$(terraform state list 2>/dev/null | wc -l)
+          
+          if [ "$RESOURCE_COUNT" -eq 0 ]; then
+            echo "⚠️ No resources found in Terraform state"
+            echo "SHOULD_DELETE_BUCKET=false" >> $GITHUB_OUTPUT
+            echo "SKIP_DESTROY=true" >> $GITHUB_OUTPUT
+          else
+            echo "✅ Found $RESOURCE_COUNT resources in state"
+            terraform state list
+            echo "SHOULD_DELETE_BUCKET=true" >> $GITHUB_OUTPUT
+            echo "SKIP_DESTROY=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Terraform Destroy
+        id: terraform-destroy
+        if: steps.check-resources.outputs.SKIP_DESTROY == 'false'
+        run: |
+          echo "💥 Executing terraform destroy..."
+          
+          # Execute terraform destroy
+          if [ -n "${{ env.ENV_FILE }}" ]; then
+            terraform destroy -auto-approve -var-file=${{ env.ENV_FILE }}
+          else
+            terraform destroy -auto-approve
+          fi
+          
+          echo "✅ Terraform destroy completed successfully"
+
+      - name: Skip Destroy Message
+        if: steps.check-resources.outputs.SKIP_DESTROY == 'true'
+        run: |
+          echo "⚠️ ========================================== ⚠️"
+          echo "🚨 NO RESOURCES TO DESTROY"
+          echo "⚠️ ========================================== ⚠️"
+          echo "The Terraform state contains no resources."
+          echo "Skipping destroy operation and preserving S3 bucket."
+
+      - name: Delete S3 State Bucket
+        if: steps.check-resources.outputs.SHOULD_DELETE_BUCKET == 'true' && steps.check-resources.outputs.SKIP_DESTROY == 'false'
+        run: |
+          echo "🗑️ Deleting S3 state bucket: ${{ env.TF_STATE_BUCKET }}"
+          
+          python3 << 'EOF'
+          import boto3
+          import os
+          
+          bucket_name = os.environ['TF_STATE_BUCKET']
+          s3 = boto3.client('s3')
+          
+          try:
+              # Check if bucket exists
+              s3.head_bucket(Bucket=bucket_name)
+              print(f"Bucket {bucket_name} exists, proceeding with deletion...")
+              
+              # Delete all object versions and delete markers
+              paginator = s3.get_paginator('list_object_versions')
+              for page in paginator.paginate(Bucket=bucket_name):
+                  objects_to_delete = []
+                  
+                  # Add all versions
+                  if 'Versions' in page:
+                      for version in page['Versions']:
+                          objects_to_delete.append({
+                              'Key': version['Key'],
+                              'VersionId': version['VersionId']
+                          })
+                  
+                  # Add all delete markers
+                  if 'DeleteMarkers' in page:
+                      for marker in page['DeleteMarkers']:
+                          objects_to_delete.append({
+                              'Key': marker['Key'],
+                              'VersionId': marker['VersionId']
+                          })
+                  
+                  # Delete objects in batches
+                  if objects_to_delete:
+                      s3.delete_objects(
+                          Bucket=bucket_name,
+                          Delete={'Objects': objects_to_delete}
+                      )
+                      print(f"Deleted {len(objects_to_delete)} objects/versions")
+              
+              # Delete the bucket
+              s3.delete_bucket(Bucket=bucket_name)
+              print(f"✅ Successfully deleted bucket: {bucket_name}")
+              
+              # Verify bucket is actually deleted
+              try:
+                  s3.head_bucket(Bucket=bucket_name)
+                  print(f"⚠️ Warning: Bucket {bucket_name} still exists after deletion attempt")
+              except:
+                  print(f"✅ Confirmed: Bucket {bucket_name} has been completely removed")
+              
+          except Exception as e:
+              if "NoSuchBucket" in str(e) or "NotFound" in str(e):
+                  print(f"⚠️ Bucket {bucket_name} not found or already deleted")
+              else:
+                  print(f"⚠️ Error deleting bucket: {e}")
+                  # Don't fail the workflow if bucket deletion fails
+                  pass
+          EOF
+
+      - name: Destroy Complete
+        run: |
+          echo "✅ ================================"
+          echo "🎯 DESTRUCTION COMPLETED"
+          echo "✅ ================================"
+          echo ""
+          echo "Environment: ${{ env.ENVIRONMENT }}"
+          if [ "${{ steps.check-resources.outputs.SHOULD_DELETE_BUCKET }}" == "true" ] && [ "${{ steps.check-resources.outputs.SKIP_DESTROY }}" == "false" ]; then
+            echo "All Terraform-managed resources have been destroyed."
+            echo "S3 state bucket has been deleted."
+          else
+            echo "No resources were destroyed or no resources existed."
+            echo "S3 state bucket has been preserved for safety."
+          fi
+          echo ""
+          echo "⚠️ Note: This action cannot be undone!"

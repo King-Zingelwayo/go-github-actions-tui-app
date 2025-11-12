@@ -1,0 +1,473 @@
+name: Terraform CI/CD
+
+on:
+  pull_request:
+    branches:
+      - main
+      - master
+      - dev
+      - qa
+      - prod
+  push:
+    branches:
+      - main
+      - master
+      - dev
+      - qa
+      - prod
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        type: choice
+        options:
+          - 'dev'
+          - 'qa'
+          - 'prod'
+      aws_region:
+        description: 'AWS Region'
+        required: true
+        type: string
+        default: 'us-east-1'
+      role_arn:
+        description: 'AWS Role ARN (overrides default pipeline role)'
+        required: false
+        type: string
+      fail_on_security_issues:
+        description: 'Fail pipeline on security/linting issues'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+permissions:
+  id-token: write   # Required for OIDC
+  contents: read
+  pull-requests: write  # Required for PR comments
+  issues: write         # Required for PR comments
+
+jobs:
+  plan:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+
+    env:
+      AWS_REGION: ${{ github.event.inputs.aws_region || secrets.AWS_REGION }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set AWS Role and Environment
+        id: set-role
+        run: |
+          # Use input role ARN or default pipeline role ARN
+          if [ -n "${{ github.event.inputs.role_arn }}" ]; then
+            ROLE_ARN="${{ github.event.inputs.role_arn }}"
+            echo "Using input role ARN"
+          else
+            ROLE_ARN="${{ secrets.PIPELINE_ROLE_ARN }}"
+            echo "Using pipeline role ARN"
+          fi
+          
+          echo "ROLE_ARN=$ROLE_ARN" >> $GITHUB_ENV
+          echo "Selected ROLE_ARN: $ROLE_ARN"
+          
+          if [ -z "$ROLE_ARN" ] || [ "$ROLE_ARN" = "" ]; then
+            echo "ERROR: No role ARN configured. Please set PIPELINE_ROLE_ARN secret or provide role_arn input."
+            exit 1
+          fi
+
+      - name: Configure AWS Credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.ROLE_ARN }}
+          role-session-name: GitHubActions-${{ github.run_id }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: latest
+
+      - name: Select .tfvars File and Detect Environment
+        run: |
+          # Find first .tfvars file
+          TFVARS_FILE=$(find . -name "*.tfvars" -type f | head -1)
+          
+          # Initialize environment from manual input
+          ENV="${{ github.event.inputs.environment }}"
+          BRANCH="${{ github.ref_name }}"
+          
+          if [ -n "$TFVARS_FILE" ]; then
+            echo "ENV_FILE=$TFVARS_FILE" >> $GITHUB_ENV
+            echo "Using tfvars file: $TFVARS_FILE"
+            
+            # Try to detect environment from tfvars file (check both 'environment' and 'env')
+            if [ -f "$TFVARS_FILE" ]; then
+              DETECTED_ENV=$(grep -E '^[[:space:]]*(environment|env)[[:space:]]*=' "$TFVARS_FILE" | sed 's/.*=[[:space:]]*"\([^"]*\)".*/\1/' | head -1)
+              if [ -n "$DETECTED_ENV" ]; then
+                ENV="$DETECTED_ENV"
+                echo "Detected environment from tfvars: $DETECTED_ENV"
+              fi
+            fi
+          else
+            echo "No .tfvars files found - continuing without variable file"
+          fi
+          
+          # Use branch name if no environment detected from tfvars or manual input
+          if [ -z "$ENV" ]; then
+            ENV="$BRANCH"
+            echo "Using branch name as environment: $ENV"
+          fi
+          
+          echo "ENVIRONMENT=$ENV" >> $GITHUB_ENV
+          echo "Final environment: $ENV"
+
+      - name: Ensure S3 Bucket Exists
+        env:
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+        if: env.TF_STATE_BUCKET != ''
+        run: |
+          BUCKET_NAME="$TF_STATE_BUCKET"
+          echo "🪣 Creating S3 bucket: $BUCKET_NAME"
+          
+          # Check if bucket exists
+          if aws s3 ls "s3://$BUCKET_NAME" 2>/dev/null; then
+            echo "✅ Bucket $BUCKET_NAME already exists"
+          else
+            echo "Creating bucket $BUCKET_NAME..."
+            # Create bucket
+            if [ "${{ env.AWS_REGION }}" = "us-east-1" ]; then
+              aws s3 mb "s3://$BUCKET_NAME"
+            else
+              aws s3 mb "s3://$BUCKET_NAME" --region "${{ env.AWS_REGION }}"
+            fi
+            
+            if [ $? -ne 0 ]; then
+              echo "❌ Failed to create bucket"
+              exit 1
+            fi
+            
+            # Enable versioning
+            aws s3api put-bucket-versioning \
+              --bucket "$BUCKET_NAME" \
+              --versioning-configuration Status=Enabled
+            
+            if [ $? -ne 0 ]; then
+              echo "❌ Failed to enable versioning"
+              exit 1
+            fi
+            
+            echo "✅ Created and configured S3 bucket: $BUCKET_NAME"
+          fi
+
+      - name: Terraform Init
+        run: |
+          echo "Using backend configuration from Terraform code"
+          terraform init -input=false
+
+      - name: Run Checkov
+        if: github.event_name == 'pull_request'
+        id: checkov
+        uses: bridgecrewio/checkov-action@master
+        continue-on-error: ${{ github.event.inputs.fail_on_security_issues != 'true' }}
+        with:
+          directory: .
+          framework: terraform
+
+      - name: Setup TFLint
+        if: github.event_name == 'pull_request'
+        uses: terraform-linters/setup-tflint@v3
+        with:
+          tflint_version: latest
+
+      - name: Run TFLint
+        if: github.event_name == 'pull_request'
+        id: tflint
+        continue-on-error: ${{ github.event.inputs.fail_on_security_issues != 'true' }}
+        run: tflint --init && tflint
+
+      - name: Run TFSec
+        if: github.event_name == 'pull_request'
+        id: tfsec
+        uses: aquasecurity/tfsec-action@v1.0.3
+        continue-on-error: ${{ github.event.inputs.fail_on_security_issues != 'true' }}
+        with:
+          working_directory: .
+
+      - name: Terraform Plan
+        id: plan
+        shell: bash {0}
+        run: |
+          if [ -n "${{ env.ENV_FILE }}" ]; then
+            terraform plan -var-file=${{ env.ENV_FILE }} -no-color -detailed-exitcode > plan_output.txt 2>&1
+            PLAN_EXIT_CODE=$?
+          else
+            terraform plan -no-color -detailed-exitcode > plan_output.txt 2>&1
+            PLAN_EXIT_CODE=$?
+          fi
+          
+          # Read plan output
+          PLAN_OUTPUT=$(cat plan_output.txt)
+          
+          # Set outputs
+          echo "exit_code=$PLAN_EXIT_CODE" >> $GITHUB_OUTPUT
+          {
+            echo "PLAN_OUTPUT<<EOF"
+            echo "$PLAN_OUTPUT"
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+          
+          # Always exit 0 so step doesn't fail
+          exit 0
+
+      - name: Display Plan Results
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "📋 Terraform Plan Results:"
+          echo "=========================="
+          cat plan_output.txt
+          echo "=========================="
+          echo "Exit Code: ${{ steps.plan.outputs.exit_code }}"
+
+      - name: Comment PR with Plan
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const plan = `${{ steps.plan.outputs.PLAN_OUTPUT || 'Plan output not available' }}`;
+            const planExitCode = '${{ steps.plan.outputs.exit_code }}';
+            const checkovStatus = '${{ steps.checkov.outcome }}' === 'success' ? '✅ Passed' : '❌ Failed';
+            const tflintStatus = '${{ steps.tflint.outcome }}' === 'success' ? '✅ Passed' : '❌ Failed';
+            const tfsecStatus = '${{ steps.tfsec.outcome }}' === 'success' ? '✅ Passed' : '❌ Failed';
+            const checkovResults = process.env.CHECKOV_RESULTS || 'No detailed results available';
+            
+            let planStatus = '❌ Failed';
+            if (planExitCode === '0') planStatus = '✅ No changes';
+            else if (planExitCode === '2') planStatus = '📋 Changes detected';
+            
+            const output = `## 🤖 Terraform Plan Review Bot
+            
+            **Environment:** ${{ env.ENVIRONMENT }}
+            **AWS Region:** ${{ env.AWS_REGION }}
+            **Branch:** ${{ github.ref_name }}
+            **Plan Status:** ${planStatus}
+            
+            ### 🔍 Security Scan Results
+            
+            <details>
+            <summary><strong>Checkov:</strong> ${checkovStatus}</summary>
+            
+            \`\`\`
+            ${checkovResults}
+            \`\`\`
+            </details>
+            
+            <details>
+            <summary><strong>TFLint:</strong> ${tflintStatus}</summary>
+            
+            \`\`\`
+            TFLint scan completed - check workflow logs for detailed results
+            \`\`\`
+            </details>
+            
+            <details>
+            <summary><strong>TFSec:</strong> ${tfsecStatus}</summary>
+            
+            \`\`\`
+            TFSec scan completed - check workflow logs for detailed results
+            \`\`\`
+            </details>
+            
+            ### 📋 Terraform Plan Output
+            <details>
+            <summary>Click to view plan details</summary>
+            
+            \`\`\`terraform
+            ${plan}
+            \`\`\`
+            </details>
+            
+            ### 🚀 Next Steps
+            ${planExitCode === '2' ? '- ✅ Review changes above and merge to apply' : '- ℹ️ No infrastructure changes detected'}
+            - Monitor deployment in GitHub Actions after merge
+            
+            ---
+            *🐘 Generated by Elephant TF CI Bot*`;
+            
+            try {
+              // Find existing comment
+              const { data: comments } = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+              });
+              
+              const botComment = comments.find(comment => 
+                comment.user.type === 'Bot' && comment.body.includes('🤖 Terraform Plan Review Bot')
+              );
+              
+              if (botComment) {
+                // Update existing comment
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: botComment.id,
+                  body: output
+                });
+                console.log('Updated existing PR comment');
+              } else {
+                // Create new comment
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body: output
+                });
+                console.log('Created new PR comment');
+              }
+            } catch (error) {
+              console.error('Error posting PR comment:', error);
+            }
+
+  apply:
+    name: Terraform Apply
+    needs: plan
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && !startsWith(github.ref_name, 'feature/') && github.event.head_commit.message != null && contains(github.event.head_commit.message, 'Merge pull request')
+
+    env:
+      AWS_REGION: ${{ github.event.inputs.aws_region || secrets.AWS_REGION }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set AWS Role and Environment
+        id: set-role
+        run: |
+          # Use input role ARN or default pipeline role ARN
+          if [ -n "${{ github.event.inputs.role_arn }}" ]; then
+            ROLE_ARN="${{ github.event.inputs.role_arn }}"
+            echo "Using input role ARN"
+          else
+            ROLE_ARN="${{ secrets.PIPELINE_ROLE_ARN }}"
+            echo "Using pipeline role ARN"
+          fi
+          
+          echo "ROLE_ARN=$ROLE_ARN" >> $GITHUB_ENV
+          echo "Selected ROLE_ARN: $ROLE_ARN"
+          
+          if [ -z "$ROLE_ARN" ] || [ "$ROLE_ARN" = "" ]; then
+            echo "ERROR: No role ARN configured. Please set PIPELINE_ROLE_ARN secret or provide role_arn input."
+            exit 1
+          fi
+
+      - name: Configure AWS Credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.ROLE_ARN }}
+          role-session-name: GitHubActions-${{ github.run_id }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: latest
+
+      - name: Select .tfvars File and Detect Environment
+        run: |
+          # Find first .tfvars file
+          TFVARS_FILE=$(find . -name "*.tfvars" -type f | head -1)
+          
+          # Initialize environment from manual input
+          ENV="${{ github.event.inputs.environment }}"
+          BRANCH="${{ github.ref_name }}"
+          
+          if [ -n "$TFVARS_FILE" ]; then
+            echo "ENV_FILE=$TFVARS_FILE" >> $GITHUB_ENV
+            echo "Using tfvars file: $TFVARS_FILE"
+            
+            # Try to detect environment from tfvars file (check both 'environment' and 'env')
+            if [ -f "$TFVARS_FILE" ]; then
+              DETECTED_ENV=$(grep -E '^[[:space:]]*(environment|env)[[:space:]]*=' "$TFVARS_FILE" | sed 's/.*=[[:space:]]*"\([^"]*\)".*/\1/' | head -1)
+              if [ -n "$DETECTED_ENV" ]; then
+                ENV="$DETECTED_ENV"
+                echo "Detected environment from tfvars: $DETECTED_ENV"
+              fi
+            fi
+          else
+            echo "No .tfvars files found - continuing without variable file"
+          fi
+          
+          # Use branch name if no environment detected from tfvars or manual input
+          if [ -z "$ENV" ]; then
+            ENV="$BRANCH"
+            echo "Using branch name as environment: $ENV"
+          fi
+          
+          echo "ENVIRONMENT=$ENV" >> $GITHUB_ENV
+          echo "Final environment: $ENV"
+
+      - name: Ensure S3 Bucket Exists
+        env:
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+        if: env.TF_STATE_BUCKET != ''
+        run: |
+          BUCKET_NAME="$TF_STATE_BUCKET"
+          echo "🪣 Creating S3 bucket: $BUCKET_NAME"
+          
+          # Check if bucket exists
+          if aws s3 ls "s3://$BUCKET_NAME" 2>/dev/null; then
+            echo "✅ Bucket $BUCKET_NAME already exists"
+          else
+            echo "Creating bucket $BUCKET_NAME..."
+            # Create bucket
+            if [ "${{ env.AWS_REGION }}" = "us-east-1" ]; then
+              aws s3 mb "s3://$BUCKET_NAME"
+            else
+              aws s3 mb "s3://$BUCKET_NAME" --region "${{ env.AWS_REGION }}"
+            fi
+            
+            if [ $? -ne 0 ]; then
+              echo "❌ Failed to create bucket"
+              exit 1
+            fi
+            
+            # Enable versioning
+            aws s3api put-bucket-versioning \
+              --bucket "$BUCKET_NAME" \
+              --versioning-configuration Status=Enabled
+            
+            if [ $? -ne 0 ]; then
+              echo "❌ Failed to enable versioning"
+              exit 1
+            fi
+            
+            echo "✅ Created and configured S3 bucket: $BUCKET_NAME"
+          fi
+
+      - name: Terraform Init
+        run: |
+          echo "Using backend configuration from Terraform code"
+          terraform init -input=false
+
+      - name: Terraform Plan
+        run: |
+          if [ -n "${{ env.ENV_FILE }}" ]; then
+            terraform plan -var-file=${{ env.ENV_FILE }}
+          else
+            terraform plan
+          fi
+
+      - name: Terraform Apply
+        run: |
+          if [ -n "${{ env.ENV_FILE }}" ]; then
+            terraform apply -auto-approve -var-file=${{ env.ENV_FILE }}
+          else
+            terraform apply -auto-approve
+          fi

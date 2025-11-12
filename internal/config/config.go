@@ -19,6 +19,7 @@ type AWSConfig struct {
 	StateBucket          string `yaml:"state_bucket"`
 	PipelineRoleARN      string `yaml:"pipeline_role_arn"`
 	FailOnSecurityIssues bool   `yaml:"fail_on_security_issues"`
+	HasExistingBackend   bool   `yaml:"has_existing_backend"`
 }
 
 type RepoConfig struct {
