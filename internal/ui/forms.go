@@ -221,37 +221,11 @@ func openBrowser(url string) error {
 }
 
 func AWSConfigForm(cfg *config.Config) error {
-	// Step 1: AWS Account ID
-	err := huh.NewForm(
-		huh.NewGroup(
-			huh.NewInput().
-				Title("AWS Account ID").
-				Description("🏦 Your 12-digit AWS account identifier").
-				Placeholder("123456789012").
-				Validate(func(s string) error {
-					if len(s) == 0 {
-						return fmt.Errorf("AWS Account ID is required")
-					}
-					if len(s) != 12 {
-						return fmt.Errorf("must be exactly 12 digits")
-					}
-					for _, r := range s {
-						if r < '0' || r > '9' {
-							return fmt.Errorf("must contain only digits")
-						}
-					}
-					return nil
-				}).
-				Value(&cfg.AWS.AccountID),
-		).Title("🏦 AWS Account").Description("Step 4.1: Enter your AWS Account ID"),
-	).Run()
-	if err != nil {
-		return err
-	}
-
-	// Step 2: Region Selection (same pattern as branch selection)
+	// Skip backend configuration - handled automatically
 	return selectAWSRegion(cfg)
 }
+
+
 
 func selectAWSRegion(cfg *config.Config) error {
 	// Build region options
@@ -261,39 +235,51 @@ func selectAWSRegion(cfg *config.Config) error {
 	regionOptions = append(regionOptions, huh.NewOption("AF South 1 (Cape Town)", "af-south-1"))
 	regionOptions = append(regionOptions, huh.NewOption("EU West 1 (Ireland)", "eu-west-1"))
 	regionOptions = append(regionOptions, huh.NewOption("EU Central 1 (Frankfurt)", "eu-central-1"))
+	regionOptions = append(regionOptions, huh.NewOption("✏️ Enter Custom Region", "custom"))
 
 	var selectedRegion string
 	err := huh.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[string]().
 				Title("Select Region").
-				Description(fmt.Sprintf("🌍 Choose from %d available regions (US, EU, AF)", len(regionOptions))).
+				Description("🌍 Choose from popular regions or enter custom").
 				Options(regionOptions...).
 				Value(&selectedRegion),
-		).Title("🌍 Region Selection").Description("Step 4.2: Choose your AWS region"),
+		).Title("🌍 Region Selection").Description("Step 2: Choose your AWS region"),
 	).Run()
 	if err != nil {
 		return err
 	}
 
-	cfg.AWS.Region = selectedRegion
+	// Handle custom region input
+	if selectedRegion == "custom" {
+		var customRegion string
+		err = huh.NewForm(
+			huh.NewGroup(
+				huh.NewInput().
+					Title("Enter AWS Region").
+					Description("🌍 Enter any valid AWS region (e.g., ap-southeast-1, ca-central-1)").
+					Placeholder("us-west-2").
+					Validate(func(s string) error {
+						if len(s) == 0 {
+							return fmt.Errorf("region is required")
+						}
+						return nil
+					}).
+					Value(&customRegion),
+			).Title("✏️ Custom Region").Description("Enter your preferred AWS region"),
+		).Run()
+		if err != nil {
+			return err
+		}
+		cfg.AWS.Region = customRegion
+	} else {
+		cfg.AWS.Region = selectedRegion
+	}
+
 	fmt.Printf("✅ Region selected: %s\n", cfg.AWS.Region)
 
-	// Step 3: S3 Bucket
-	err = huh.NewForm(
-		huh.NewGroup(
-			huh.NewInput().
-				Title("Terraform State S3 Bucket").
-				Description("🪣 S3 bucket name for storing Terraform state").
-				Placeholder("my-terraform-state-bucket-12345").
-				Value(&cfg.AWS.StateBucket),
-		).Title("🪣 S3 Configuration").Description("Step 4.3: Configure Terraform state storage"),
-	).Run()
-	if err != nil {
-		return err
-	}
-
-	// Step 4: AWS Role ARNs
+	// Step 3: AWS Role ARNs
 	return AWSRoleConfigForm(cfg)
 }
 
@@ -318,7 +304,7 @@ func AWSRoleConfigForm(cfg *config.Config) error {
 				Affirmative("Yes, fail on issues").
 				Negative("No, continue on issues").
 				Value(&cfg.AWS.FailOnSecurityIssues),
-		).Title("🔐 Pipeline Configuration").Description("Step 4.4: Configure pipeline settings"),
+		).Title("🔐 Pipeline Configuration").Description("Step 3: Configure pipeline settings"),
 	).Run()
 }
 
@@ -343,7 +329,7 @@ func ConfirmationForm(cfg *config.Config) (bool, error) {
 	var confirm bool
 
 	summary := fmt.Sprintf(`
-🚀 Indlovu Pipeline Setup Summary
+🚀 Elephant TF CI Pipeline Setup Summary
 
 🐙 GitHub Configuration:
   • Username: %s
@@ -352,31 +338,31 @@ func ConfirmationForm(cfg *config.Config) (bool, error) {
   • Private: %t
 
 ☁️ AWS Configuration:
-  • Account ID: %s
   • Region: %s
-  • State Bucket: %s
+  • Pipeline Role: %s
+  • Backend: Auto-managed S3 bucket
 
 🚀 Pipeline Features:
   • Terraform CI/CD workflow
   • Security scanning (Checkov, TFSec, TFLint)
-  • Multi-environment support (dev/qa/prod)
-  • OIDC authentication
+  • Multi-environment support
+  • OIDC keyless authentication
   • Encrypted GitHub secrets
+  • Automatic S3 backend creation
 
 ⚡ This will create/update:
   1. GitHub repository (if needed)
-  2. .github/workflows/terraform.yml
-  3. GitHub repository secrets
-  4. Environment configurations
+  2. S3 backend configuration (auto-managed)
+  3. .github/workflows/terraform.yml
+  4. GitHub repository secrets
 
 Ready to proceed?`, 
 		cfg.GitHub.Username,
 		cfg.GitHub.RepoName,
 		cfg.GitHub.Branch,
 		cfg.Repo.Private,
-		cfg.AWS.AccountID,
 		cfg.AWS.Region,
-		cfg.AWS.StateBucket,
+		cfg.AWS.PipelineRoleARN,
 	)
 
 	form := huh.NewForm(
@@ -391,7 +377,7 @@ Ready to proceed?`,
 				Affirmative("Yes, Create Pipeline!").
 				Negative("Cancel").
 				Value(&confirm),
-		).Title("🔍 Final Review").Description("Step 5 of 5: Review and confirm your configuration"),
+		).Title("🔍 Final Review").Description("Step 4 of 4: Review and confirm your configuration"),
 	)
 
 	err := form.Run()
